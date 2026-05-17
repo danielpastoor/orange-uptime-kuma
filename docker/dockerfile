@@ -33,6 +33,12 @@ LABEL org.opencontainers.image.source="https://github.com/louislam/uptime-kuma"
 
 ENV UPTIME_KUMA_IS_CONTAINER=1
 
+# Customer metadata injected at deploy time via -e flags or Kubernetes env:
+ENV CUSTOMER_NAME=""
+ENV CUSTOMER_ID=""
+ENV CUSTOMER_EMAIL=""
+ENV CUSTOMER_DOMAIN=""
+
 # Copy app files from build layer
 COPY --chown=node:node --from=build /app /app
 

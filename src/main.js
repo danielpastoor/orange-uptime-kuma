@@ -30,7 +30,14 @@ const app = createApp({
     data() {
         return {
             appName: appName,
+            customerInfo: { name: "", id: "", email: "", domain: "" },
         };
+    },
+    mounted() {
+        fetch("/api/customer-info")
+            .then((r) => r.json())
+            .then((data) => { this.customerInfo = data; })
+            .catch(() => {});
     },
     render: () => h(App),
 });

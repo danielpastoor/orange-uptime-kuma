@@ -22,6 +22,11 @@
                 <span class="fs-4 title">Orange Uptime Kuma</span>
             </router-link>
 
+            <div v-if="$root.customerInfo && $root.customerInfo.name" class="customer-badge me-auto ms-3">
+                <font-awesome-icon icon="building" class="me-1" />
+                <span class="customer-name">{{ $root.customerInfo.name }}</span>
+            </div>
+
             <a
                 v-if="hasNewVersion"
                 target="_blank"
@@ -66,6 +71,22 @@
                                 </i18n-t>
                                 <span v-if="$root.username == null" class="dropdown-item-text">
                                     {{ $t("signedInDispDisabled") }}
+                                </span>
+                            </li>
+
+                            <li v-if="$root.customerInfo && $root.customerInfo.name">
+                                <hr class="dropdown-divider" />
+                            </li>
+                            <li v-if="$root.customerInfo && $root.customerInfo.name">
+                                <span class="dropdown-item-text customer-info-block">
+                                    <font-awesome-icon icon="building" class="me-1" />
+                                    <strong>{{ $root.customerInfo.name }}</strong><br />
+                                    <small v-if="$root.customerInfo.email" class="text-muted">
+                                        {{ $root.customerInfo.email }}
+                                    </small>
+                                    <small v-if="$root.customerInfo.domain" class="d-block text-muted">
+                                        {{ $root.customerInfo.domain }}
+                                    </small>
                                 </span>
                             </li>
 
@@ -304,6 +325,29 @@ main {
 
 .title {
     font-weight: bold;
+}
+
+.customer-badge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background-color: $primary;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 4px 12px;
+    border-radius: 50rem;
+
+    .dark & {
+        background-color: $primary;
+        color: #fff;
+    }
+}
+
+.customer-info-block {
+    font-size: 13px;
+    display: block;
+    padding-bottom: 0.5rem;
 }
 
 .nav {

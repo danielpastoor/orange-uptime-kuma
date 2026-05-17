@@ -25,6 +25,16 @@ let cache = apicache.middleware;
 const server = UptimeKumaServer.getInstance();
 let io = server.io;
 
+router.get("/api/customer-info", (request, response) => {
+    allowDevAllOrigin(response);
+    response.json({
+        name: process.env.CUSTOMER_NAME || "",
+        id: process.env.CUSTOMER_ID || "",
+        email: process.env.CUSTOMER_EMAIL || "",
+        domain: process.env.CUSTOMER_DOMAIN || "",
+    });
+});
+
 router.get("/api/entry-page", async (request, response) => {
     allowDevAllOrigin(response);
 
