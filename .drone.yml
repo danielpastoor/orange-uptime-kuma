@@ -1,0 +1,249 @@
+kind: pipeline
+type: docker
+name: PR check pipeline
+
+# Triggered on pull requests to main
+trigger:
+  event:
+    - pull_request
+  branch:
+    - main
+
+# Shared node_modules cache volume so each step can reuse dependencies
+volumes:
+  - name: node_cache
+    temp: {}
+
+steps:
+  - name: build
+    image: node:18
+    volumes:
+      - name: node_cache
+        path: /drone/src/node_modules
+    commands:
+      - echo "[$(date -u)] Installing dependencies…"
+      - npm ci
+      - echo "[$(date -u)] Build step complete"
+
+  - name: test
+    image: node:18
+    depends_on:
+      - build
+    volumes:
+      - name: node_cache
+        path: /drone/src/node_modules
+    commands:
+      - npm ci
+      - npm test
+      - echo "[$(date -u)] Tests passed for commit $DRONE_COMMIT"
+
+  - name: sast-eslint
+    image: node:18
+    depends_on:
+      - build
+    volumes:
+      - name: node_cache
+        path: /drone/src/node_modules
+    commands:
+      - npm ci
+      - echo "[$(date -u)] Running SAST with ESLint…"
+      - npx eslint . --ext .js --max-warnings=10 || true
+      - echo "[$(date -u)] SAST complete"
+
+  - name: npm-audit
+    image: node:18
+    depends_on:
+      - build
+    volumes:
+      - name: node_cache
+        path: /drone/src/node_modules
+    commands:
+      - npm ci
+      - echo "[$(date -u)] Running npm audit…"
+      - npm audit --audit-level=high || true
+      - echo "[$(date -u)] npm audit complete"
+
+  - name: owasp-dependency-check
+    image: maven:3-openjdk-17
+    depends_on:
+      - build
+    environment:
+      NVD_API_KEY:
+        from_secret: NVD_API_KEY
+    commands:
+      - echo "[$(date -u)] Running OWASP Dependency-Check…"
+      - apt-get update -q && apt-get install -y -q wget unzip
+      - wget -q https://github.com/dependency-check/DependencyCheck/releases/download/v12.2.0/dependency-check-12.2.0-release.zip
+      - unzip -q dependency-check-12.2.0-release.zip
+      - >
+        ./dependency-check/bin/dependency-check.sh
+        --project "orange-uptime-kuma"
+        --scan .
+        --format HTML
+        --format JSON
+        --out ./dependency-check-report
+        --nvdApiKey $NVD_API_KEY || true
+      - echo "[$(date -u)] OWASP scan complete"
+
+  - name: secrets-scan
+    image: node:18
+    depends_on:
+      - build
+    commands:
+      - echo "[$(date -u)] Scanning for hardcoded secrets…"
+      - >
+        grep -rn "password\s*=\|secret\s*=\|api_key\s*=" --include="*.js" .
+        && echo "Possible hardcoded secrets found — review required"
+        || echo "[$(date -u)] No hardcoded secrets detected"
+
+  - name: sbom
+    image: node:18
+    depends_on:
+      - build
+    volumes:
+      - name: node_cache
+        path: /drone/src/node_modules
+    commands:
+      - npm ci
+      - echo "[$(date -u)] Generating Software Bill of Materials…"
+      - npx @cyclonedx/cyclonedx-npm --output-format JSON --output-file sbom.json
+      - |
+        echo "[$(date -u)] SBOM generated:"
+        node -e "
+          const d = require('./sbom.json');
+          const c = d.components || [];
+          console.log('  Components:', c.length);
+          console.log('  Format:', d.bomFormat || 'unknown');
+          console.log('  Version:', d.specVersion || 'unknown');
+        "
+
+  - name: config-validation
+    image: node:18
+    depends_on:
+      - build
+    commands:
+      - echo "[$(date -u)] Validating package.json…"
+      - |
+        node -e "
+          const pkg = require('./package.json');
+          const required = ['name','version','main','scripts','dependencies'];
+          required.forEach(f => { if (!pkg[f]) throw new Error('Missing field: ' + f); });
+          console.log('[$(date -u)] package.json is valid');
+          console.log('  Name:', pkg.name);
+          console.log('  Version:', pkg.version);
+        "
+      - echo "[$(date -u)] Checking Node.js version compatibility…"
+      - |
+        node -e "
+          const pkg = require('./package.json');
+          console.log('Required Node:', (pkg.engines && pkg.engines.node) || 'not specified');
+          console.log('Actual Node:', process.version);
+        "
+      - echo "[$(date -u)] Config validation complete"
+
+  - name: notify-discord
+    image: curlimages/curl:latest
+    depends_on:
+      - test
+      - sast-eslint
+      - npm-audit
+      - owasp-dependency-check
+      - secrets-scan
+      - sbom
+      - config-validation
+    environment:
+      DISCORD_WEBHOOK:
+        from_secret: DISCORD_WEBHOOK
+    when:
+      status:
+        - success
+        - failure
+    commands:
+      - |
+        if [ "$DRONE_BUILD_STATUS" = "success" ]; then
+          COLOR=3066993
+          TITLE="✅ PR check geslaagd"
+        else
+          COLOR=15158332
+          TITLE="❌ PR check mislukt"
+        fi
+        SHORT_SHA=$(echo "$DRONE_COMMIT" | cut -c1-7)
+        curl -s -X POST "$DISCORD_WEBHOOK" \
+          -H "Content-Type: application/json" \
+          -d "{
+            \"embeds\": [{
+              \"title\": \"$TITLE\",
+              \"color\": $COLOR,
+              \"fields\": [
+                {\"name\": \"Pull Request\", \"value\": \"#$DRONE_PULL_REQUEST\", \"inline\": true},
+                {\"name\": \"Branch\", \"value\": \"$DRONE_SOURCE_BRANCH\", \"inline\": true},
+                {\"name\": \"Commit\", \"value\": \"$SHORT_SHA\", \"inline\": true},
+                {\"name\": \"Aangemaakt door\", \"value\": \"$DRONE_COMMIT_AUTHOR\", \"inline\": false}
+              ]
+            }]
+          }"
+
+---
+kind: pipeline
+type: docker
+name: Docker build & push
+
+trigger:
+  event:
+    - push
+  branch:
+    - main
+
+steps:
+  - name: docker-build-push
+    image: plugins/docker
+    settings:
+      registry: 10.24.36.10:30080
+      repo: 10.24.36.10:30080/wulpy/orange-uptime-kuma
+      dockerfile: docker/dockerfile
+      tags:
+        - latest
+        - ${DRONE_COMMIT_SHA:0:7}
+      username:
+        from_secret: GITEA_USERNAME
+      password:
+        from_secret: GITEA_PASSWORD
+      insecure: true
+
+  - name: notify-discord
+    image: curlimages/curl:latest
+    depends_on:
+      - docker-build-push
+    environment:
+      DISCORD_WEBHOOK:
+        from_secret: DISCORD_WEBHOOK
+    when:
+      status:
+        - success
+        - failure
+    commands:
+      - |
+        if [ "$DRONE_BUILD_STATUS" = "success" ]; then
+          COLOR=3066993
+          TITLE="✅ Docker image gepusht"
+          DESC="Image: \`10.24.36.10:30080/wulpy/orange-uptime-kuma:${DRONE_COMMIT_SHA:0:7}\`"
+        else
+          COLOR=15158332
+          TITLE="❌ Docker build mislukt"
+          DESC="Zie de Drone logs voor details."
+        fi
+        SHORT_SHA=$(echo "$DRONE_COMMIT" | cut -c1-7)
+        curl -s -X POST "$DISCORD_WEBHOOK" \
+          -H "Content-Type: application/json" \
+          -d "{
+            \"embeds\": [{
+              \"title\": \"$TITLE\",
+              \"description\": \"$DESC\",
+              \"color\": $COLOR,
+              \"fields\": [
+                {\"name\": \"Branch\", \"value\": \"$DRONE_BRANCH\", \"inline\": true},
+                {\"name\": \"Commit\", \"value\": \"$SHORT_SHA\", \"inline\": true},
+                {\"name\": \"Door\", \"value\": \"$DRONE_COMMIT_AUTHOR\", \"inline\": true}
+              ]
+            }]
+          }"
