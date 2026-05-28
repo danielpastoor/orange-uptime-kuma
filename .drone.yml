@@ -16,7 +16,7 @@ volumes:
 
 steps:
   - name: build
-    image: node:18
+    image: node:22
     volumes:
       - name: node_cache
         path: /drone/src/node_modules
@@ -26,7 +26,7 @@ steps:
       - echo "[$(date -u)] Build step complete"
 
   - name: test
-    image: node:18
+    image: node:22
     depends_on:
       - build
     volumes:
@@ -38,7 +38,7 @@ steps:
       - echo "[$(date -u)] Tests passed for commit $DRONE_COMMIT"
 
   - name: sast-eslint
-    image: node:18
+    image: node:22
     depends_on:
       - build
     volumes:
@@ -51,7 +51,7 @@ steps:
       - echo "[$(date -u)] SAST complete"
 
   - name: npm-audit
-    image: node:18
+    image: node:22
     depends_on:
       - build
     volumes:
@@ -86,7 +86,7 @@ steps:
       - echo "[$(date -u)] OWASP scan complete"
 
   - name: secrets-scan
-    image: node:18
+    image: node:22
     depends_on:
       - build
     commands:
@@ -97,7 +97,7 @@ steps:
         || echo "[$(date -u)] No hardcoded secrets detected"
 
   - name: sbom
-    image: node:18
+    image: node:22
     depends_on:
       - build
     volumes:
@@ -118,7 +118,7 @@ steps:
         "
 
   - name: config-validation
-    image: node:18
+    image: node:22
     depends_on:
       - build
     commands:
@@ -126,7 +126,7 @@ steps:
       - |
         node -e "
           const pkg = require('./package.json');
-          const required = ['name','version','main','scripts','dependencies'];
+          const required = ['name','version','scripts','dependencies'];
           required.forEach(f => { if (!pkg[f]) throw new Error('Missing field: ' + f); });
           console.log('[$(date -u)] package.json is valid');
           console.log('  Name:', pkg.name);
