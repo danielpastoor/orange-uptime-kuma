@@ -1859,8 +1859,25 @@ async function initDatabase(testMode = false) {
         log.debug("server", "Load JWT secret from database.");
     }
 
-    // If there is no record in user table, it is a new Uptime Kuma instance, need to setup
-    if ((await R.knex("user").count("id as count").first()).count === 0) {
+    const userCount = (await R.knex("user").count("id as count").first()).count;
+    const customerUsername = [
+        process.env.CUSTOMER_EMAIL,
+        process.env.CUSTOMER_ID,
+        process.env.CUSTOMER_NAME,
+        process.env.CUSTOMER_DOMAIN,
+    ]
+        .find((value) => value?.trim())
+        ?.trim()
+        .slice(0, 255);
+
+    if (userCount === 0 && customerUsername) {
+        let user = R.dispense("user");
+        user.username = customerUsername;
+        user.password = await passwordHash.generate(genSecret(32));
+        await R.store(user);
+        await Settings.set("disableAuth", true, "general");
+        log.info("server", "Customer data found, setup page skipped");
+    } else if (userCount === 0) {
         log.info("server", "No user, need setup");
         needSetup = true;
     }

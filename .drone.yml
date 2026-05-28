@@ -203,6 +203,7 @@ steps:
       repo:
         from_secret: KUMA_IMAGE_REPO
       dockerfile: docker/dockerfile
+      target: release
       tags:
         - latest
         - ${DRONE_COMMIT_SHA:0:7}
@@ -211,41 +212,3 @@ steps:
       password:
         from_secret: GITEA_REGISTRY_PASSWORD
       insecure: true
-
-  - name: notify-discord
-    image: curlimages/curl:latest
-    depends_on:
-      - docker-build-push
-    environment:
-      DISCORD_WEBHOOK:
-        from_secret: DISCORD_WEBHOOK
-    when:
-      status:
-        - success
-        - failure
-    commands:
-      - |
-        if [ "$DRONE_BUILD_STATUS" = "success" ]; then
-          COLOR=3066993
-          TITLE="✅ Docker image gepusht"
-          DESC="Image: \`$DRONE_REPO:${DRONE_COMMIT_SHA:0:7}\`"
-        else
-          COLOR=15158332
-          TITLE="❌ Docker build mislukt"
-          DESC="Zie de Drone logs voor details."
-        fi
-        SHORT_SHA=$(echo "$DRONE_COMMIT" | cut -c1-7)
-        curl -s -X POST "$DISCORD_WEBHOOK" \
-          -H "Content-Type: application/json" \
-          -d "{
-            \"embeds\": [{
-              \"title\": \"$TITLE\",
-              \"description\": \"$DESC\",
-              \"color\": $COLOR,
-              \"fields\": [
-                {\"name\": \"Branch\", \"value\": \"$DRONE_BRANCH\", \"inline\": true},
-                {\"name\": \"Commit\", \"value\": \"$SHORT_SHA\", \"inline\": true},
-                {\"name\": \"Door\", \"value\": \"$DRONE_COMMIT_AUTHOR\", \"inline\": true}
-              ]
-            }]
-          }"
