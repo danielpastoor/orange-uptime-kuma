@@ -198,16 +198,18 @@ steps:
   - name: docker-build-push
     image: plugins/docker
     settings:
-      registry: 10.24.36.10:30080
-      repo: 10.24.36.10:30080/wulpy/orange-uptime-kuma
+      registry:
+        from_secret: GITEA_REGISTRY
+      repo:
+        from_secret: KUMA_IMAGE_REPO
       dockerfile: docker/dockerfile
       tags:
         - latest
         - ${DRONE_COMMIT_SHA:0:7}
       username:
-        from_secret: GITEA_USERNAME
+        from_secret: GITEA_REGISTRY_USERNAME
       password:
-        from_secret: GITEA_PASSWORD
+        from_secret: GITEA_REGISTRY_PASSWORD
       insecure: true
 
   - name: notify-discord
@@ -226,7 +228,7 @@ steps:
         if [ "$DRONE_BUILD_STATUS" = "success" ]; then
           COLOR=3066993
           TITLE="✅ Docker image gepusht"
-          DESC="Image: \`10.24.36.10:30080/wulpy/orange-uptime-kuma:${DRONE_COMMIT_SHA:0:7}\`"
+          DESC="Image: \`$DRONE_REPO:${DRONE_COMMIT_SHA:0:7}\`"
         else
           COLOR=15158332
           TITLE="❌ Docker build mislukt"
