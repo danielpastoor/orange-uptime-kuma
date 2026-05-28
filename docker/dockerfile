@@ -11,8 +11,12 @@ FROM louislam/uptime-kuma:builder-go AS build_healthcheck
 # Build in Node.js
 ############################################
 FROM louislam/uptime-kuma:base2 AS build
-USER node
 WORKDIR /app
+# The base image leaves /app owned by root, so switching to USER node
+# before this chown makes `npm ci` fail with EACCES when it tries to
+# create /app/node_modules.
+RUN chown -R node:node /app
+USER node
 
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=1
 COPY --chown=node:node .npmrc .npmrc
