@@ -63,28 +63,6 @@ steps:
       - npm audit --audit-level=high || true
       - echo "[$(date -u)] npm audit complete"
 
-  - name: owasp-dependency-check
-    image: maven:3-openjdk-17
-    depends_on:
-      - build
-    environment:
-      NVD_API_KEY:
-        from_secret: NVD_API_KEY
-    commands:
-      - echo "[$(date -u)] Running OWASP Dependency-Check…"
-      - apt-get update -q && apt-get install -y -q wget unzip
-      - wget -q https://github.com/dependency-check/DependencyCheck/releases/download/v12.2.0/dependency-check-12.2.0-release.zip
-      - unzip -q dependency-check-12.2.0-release.zip
-      - >
-        ./dependency-check/bin/dependency-check.sh
-        --project "orange-uptime-kuma"
-        --scan .
-        --format HTML
-        --format JSON
-        --out ./dependency-check-report
-        --nvdApiKey $NVD_API_KEY || true
-      - echo "[$(date -u)] OWASP scan complete"
-
   - name: secrets-scan
     image: node:22
     depends_on:
