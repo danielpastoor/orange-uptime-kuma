@@ -141,48 +141,6 @@ steps:
         "
       - echo "[$(date -u)] Config validation complete"
 
-  - name: notify-discord
-    image: curlimages/curl:latest
-    depends_on:
-      - test
-      - sast-eslint
-      - npm-audit
-      - owasp-dependency-check
-      - secrets-scan
-      - sbom
-      - config-validation
-    environment:
-      DISCORD_WEBHOOK:
-        from_secret: DISCORD_WEBHOOK
-    when:
-      status:
-        - success
-        - failure
-    commands:
-      - |
-        if [ "$DRONE_BUILD_STATUS" = "success" ]; then
-          COLOR=3066993
-          TITLE="✅ PR check geslaagd"
-        else
-          COLOR=15158332
-          TITLE="❌ PR check mislukt"
-        fi
-        SHORT_SHA=$(echo "$DRONE_COMMIT" | cut -c1-7)
-        curl -s -X POST "$DISCORD_WEBHOOK" \
-          -H "Content-Type: application/json" \
-          -d "{
-            \"embeds\": [{
-              \"title\": \"$TITLE\",
-              \"color\": $COLOR,
-              \"fields\": [
-                {\"name\": \"Pull Request\", \"value\": \"#$DRONE_PULL_REQUEST\", \"inline\": true},
-                {\"name\": \"Branch\", \"value\": \"$DRONE_SOURCE_BRANCH\", \"inline\": true},
-                {\"name\": \"Commit\", \"value\": \"$SHORT_SHA\", \"inline\": true},
-                {\"name\": \"Aangemaakt door\", \"value\": \"$DRONE_COMMIT_AUTHOR\", \"inline\": false}
-              ]
-            }]
-          }"
-
 ---
 kind: pipeline
 type: docker
