@@ -14,6 +14,13 @@ volumes:
   - name: node_cache
     temp: {}
 
+services:
+  - name: docker
+    image: docker:27-dind
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+
 steps:
   - name: build
     image: node:22
@@ -29,10 +36,13 @@ steps:
     image: node:22
     depends_on:
       - build
+    environment:
+      DOCKER_HOST: tcp://docker:2375
     volumes:
       - name: node_cache
         path: /drone/src/node_modules
     commands:
+      - apt-get update && apt-get install --yes --no-install-recommends iputils-ping && rm -rf /var/lib/apt/lists/*
       - npm ci
       - npm test
       - echo "[$(date -u)] Tests passed for commit $DRONE_COMMIT"
@@ -84,7 +94,7 @@ steps:
     commands:
       - npm ci
       - echo "[$(date -u)] Generating Software Bill of Materials…"
-      - npx @cyclonedx/cyclonedx-npm --output-format JSON --output-file sbom.json
+      - npx @cyclonedx/cyclonedx-npm --ignore-npm-errors --output-format JSON --output-file sbom.json
       - |
         echo "[$(date -u)] SBOM generated:"
         node -e "

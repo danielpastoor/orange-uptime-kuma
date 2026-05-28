@@ -11,8 +11,10 @@ FROM louislam/uptime-kuma:builder-go AS build_healthcheck
 # Build in Node.js
 ############################################
 FROM louislam/uptime-kuma:base2 AS build
-USER node
+USER root
 WORKDIR /app
+RUN chown -R node:node /app
+USER node
 
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=1
 COPY --chown=node:node .npmrc .npmrc
