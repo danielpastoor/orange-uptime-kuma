@@ -1744,6 +1744,12 @@ let needSetup = false;
 
     await server.start();
 
+    // Orange Kuma: optionally bootstrap the admin user from env so a
+    // freshly provisioned instance is immediately usable (login + the
+    // auto-created monitor below) without the manual web setup wizard.
+    // Runs before listen() so the user exists by the time monitors start.
+    await autoCreateAdminUser();
+
     server.httpServer.listen(port, hostname, async () => {
         printServerUrls("server", port, hostname, config.isSSL);
 
@@ -1944,6 +1950,50 @@ async function startMonitors() {
         }
         // Give some delays, so all monitors won't make request at the same moment when just start the server.
         await sleep(getRandomInt(300, 1000));
+    }
+}
+
+/**
+ * Orange Kuma customization.
+ *
+ * Stock Uptime Kuma only creates the admin user through the web setup
+ * wizard. For provisioned customer instances we want a hands-off boot:
+ * if UPTIME_KUMA_ADMIN_PASSWORD is set and no user exists yet, create
+ * the admin account from env (username from UPTIME_KUMA_ADMIN_USER,
+ * default "admin"). This mirrors the socket "setup" handler.
+ *
+ * Idempotent: only runs when the user table is empty, so a restart or a
+ * later manual password change is never clobbered. Best-effort: any
+ * failure is logged and swallowed so it can never block startup. When
+ * no password env is provided we leave the normal web-setup flow intact.
+ * @returns {Promise<void>}
+ */
+async function autoCreateAdminUser() {
+    const password = process.env.UPTIME_KUMA_ADMIN_PASSWORD || "";
+    if (!password) {
+        return;
+    }
+
+    const username = (process.env.UPTIME_KUMA_ADMIN_USER || "admin").trim() || "admin";
+
+    try {
+        const count = (await R.knex("user").count("id as count").first()).count;
+        if (count !== 0) {
+            return;
+        }
+
+        const user = R.dispense("user");
+        user.username = username;
+        user.password = await passwordHash.generate(password);
+        await R.store(user);
+
+        // Flip the in-memory flag so clients get the login screen rather
+        // than the setup wizard (mirrors the socket "setup" handler).
+        needSetup = false;
+
+        log.info("server", `Bootstrapped admin user "${username}" from env`);
+    } catch (e) {
+        log.error("server", `Failed to bootstrap admin user from env: ${e.message}`);
     }
 }
 
