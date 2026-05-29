@@ -203,6 +203,11 @@ steps:
       repo:
         from_secret: KUMA_IMAGE_REPO
       dockerfile: docker/dockerfile
+      # Pin the build to the runnable "release" stage. Without a target,
+      # Docker builds the LAST stage in the file ("upload-artifact"), which
+      # runs upload-github-release-asset.sh against GitHub and fails (no
+      # GITHUB_TOKEN). "release" is the stage that matches louislam's :latest.
+      target: release
       tags:
         - latest
         - ${DRONE_COMMIT_SHA:0:7}
