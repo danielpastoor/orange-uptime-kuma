@@ -1,3 +1,17 @@
+> ## 🟠 Orange Uptime Kuma — platform fork
+>
+> This is a **fork of Uptime Kuma**, customized to run as the per-customer
+> monitoring instance of the Orange Kuma hosting platform (Cloud S2 2526).
+> It adds light branding, customer-metadata awareness, and a hands-off
+> startup (env-based admin bootstrap + auto-created domain monitor) so a
+> provisioned instance is usable with no manual setup.
+>
+> **See [`DOCUMENTATION.md`](DOCUMENTATION.md) for everything this fork
+> changes.** The platform that deploys it lives in the `project-cloud`
+> repository. The original upstream README follows below unchanged.
+
+---
+
 <div align="center" width="100%">
     <img src="./public/icon.svg" width="128" alt="Uptime Kuma Logo" />
 </div>

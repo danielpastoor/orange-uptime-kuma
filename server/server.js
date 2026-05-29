@@ -1744,10 +1744,21 @@ let needSetup = false;
 
     await server.start();
 
+    // Orange Kuma: optionally bootstrap the admin user from env so a
+    // freshly provisioned instance is immediately usable (login + the
+    // auto-created monitor below) without the manual web setup wizard.
+    // Runs before listen() so the user exists by the time monitors start.
+    await autoCreateAdminUser();
+
     server.httpServer.listen(port, hostname, async () => {
         printServerUrls("server", port, hostname, config.isSSL);
 
         await startMonitors();
+
+        // Orange Kuma: if this instance was provisioned with a
+        // CUSTOMER_DOMAIN, seed an HTTPS monitor for it on first boot.
+        // Idempotent and best-effort: never block startup.
+        await autoCreateCustomerMonitor();
 
         // Put this here. Start background jobs after the db and server is ready to prevent clear up during db migration.
         await initBackgroundJobs();
@@ -1939,6 +1950,116 @@ async function startMonitors() {
         }
         // Give some delays, so all monitors won't make request at the same moment when just start the server.
         await sleep(getRandomInt(300, 1000));
+    }
+}
+
+/**
+ * Orange Kuma customization.
+ *
+ * Stock Uptime Kuma only creates the admin user through the web setup
+ * wizard. For provisioned customer instances we want a hands-off boot:
+ * if UPTIME_KUMA_ADMIN_PASSWORD is set and no user exists yet, create
+ * the admin account from env (username from UPTIME_KUMA_ADMIN_USER,
+ * default "admin"). This mirrors the socket "setup" handler.
+ *
+ * Idempotent: only runs when the user table is empty, so a restart or a
+ * later manual password change is never clobbered. Best-effort: any
+ * failure is logged and swallowed so it can never block startup. When
+ * no password env is provided we leave the normal web-setup flow intact.
+ * @returns {Promise<void>}
+ */
+async function autoCreateAdminUser() {
+    const password = process.env.UPTIME_KUMA_ADMIN_PASSWORD || "";
+    if (!password) {
+        return;
+    }
+
+    const username = (process.env.UPTIME_KUMA_ADMIN_USER || "admin").trim() || "admin";
+
+    try {
+        const count = (await R.knex("user").count("id as count").first()).count;
+        if (count !== 0) {
+            return;
+        }
+
+        const user = R.dispense("user");
+        user.username = username;
+        user.password = await passwordHash.generate(password);
+        await R.store(user);
+
+        // Flip the in-memory flag so clients get the login screen rather
+        // than the setup wizard (mirrors the socket "setup" handler).
+        needSetup = false;
+
+        log.info("server", `Bootstrapped admin user "${username}" from env`);
+    } catch (e) {
+        log.error("server", `Failed to bootstrap admin user from env: ${e.message}`);
+    }
+}
+
+/**
+ * Orange Kuma customization.
+ *
+ * When a customer instance is provisioned via GitOps, the deployment
+ * passes the customer's domain in the CUSTOMER_DOMAIN env var. On
+ * startup we auto-create a single HTTPS monitor for that domain so the
+ * customer's dashboard is useful out of the box, without anyone having
+ * to add the first monitor by hand.
+ *
+ * Notes on ordering: Uptime Kuma only creates the admin user through
+ * the web setup wizard (there is no env-based admin bootstrap). A
+ * monitor needs an owning user_id, so if setup hasn't happened yet we
+ * skip and retry on the next boot once a user exists.
+ *
+ * Idempotent: keyed on the target URL, so re-running / restarting never
+ * produces duplicates. Best-effort: any failure is logged and swallowed
+ * so it can never block the server from coming up.
+ * @returns {Promise<void>}
+ */
+async function autoCreateCustomerMonitor() {
+    const domain = (process.env.CUSTOMER_DOMAIN || "").trim();
+    if (!domain) {
+        return;
+    }
+
+    try {
+        // A monitor must belong to a user. If the setup wizard hasn't
+        // run yet there is no user - skip; we'll retry next boot.
+        const user = await R.findOne("user", " 1=1 ORDER BY id ASC ");
+        if (!user) {
+            log.info("monitor", `CUSTOMER_DOMAIN set (${domain}) but no user exists yet; skipping auto-monitor until setup is done.`);
+            return;
+        }
+
+        const url = `https://${domain}`;
+
+        // Idempotency: only create if a monitor for this URL is absent.
+        const existing = await R.findOne("monitor", " url = ? ", [ url ]);
+        if (existing) {
+            return;
+        }
+
+        const bean = R.dispense("monitor");
+        bean.name = domain;
+        bean.type = "http";
+        bean.url = url;
+        bean.method = "GET";
+        bean.interval = 60;
+        bean.maxretries = 1;
+        bean.retry_interval = 60;
+        bean.active = 1;
+        bean.user_id = user.id;
+        // Remaining columns (accepted_statuscodes_json, maxredirects,
+        // etc.) fall back to their schema defaults.
+        await R.store(bean);
+
+        // Reload as a fully-populated bean and start it on the scheduler
+        // so it begins checking immediately, no restart required.
+        await startMonitor(user.id, bean.id);
+
+        log.info("monitor", `Auto-created HTTPS monitor for ${domain}`);
+    } catch (e) {
+        log.error("monitor", `Failed to auto-create monitor for ${domain}: ${e.message}`);
     }
 }
 
