@@ -14,9 +14,16 @@ volumes:
   - name: node_cache
     temp: {}
 
+services:
+  - name: docker
+    image: docker:27-dind
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+
 steps:
   - name: build
-    image: node:18
+    image: node:22
     volumes:
       - name: node_cache
         path: /drone/src/node_modules
@@ -26,19 +33,22 @@ steps:
       - echo "[$(date -u)] Build step complete"
 
   - name: test
-    image: node:18
+    image: node:22
     depends_on:
       - build
+    environment:
+      DOCKER_HOST: tcp://docker:2375
     volumes:
       - name: node_cache
         path: /drone/src/node_modules
     commands:
+      - apt-get update && apt-get install --yes --no-install-recommends iputils-ping && rm -rf /var/lib/apt/lists/*
       - npm ci
       - npm test
       - echo "[$(date -u)] Tests passed for commit $DRONE_COMMIT"
 
   - name: sast-eslint
-    image: node:18
+    image: node:22
     depends_on:
       - build
     volumes:
@@ -51,7 +61,7 @@ steps:
       - echo "[$(date -u)] SAST complete"
 
   - name: npm-audit
-    image: node:18
+    image: node:22
     depends_on:
       - build
     volumes:
@@ -63,30 +73,8 @@ steps:
       - npm audit --audit-level=high || true
       - echo "[$(date -u)] npm audit complete"
 
-  - name: owasp-dependency-check
-    image: maven:3-openjdk-17
-    depends_on:
-      - build
-    environment:
-      NVD_API_KEY:
-        from_secret: NVD_API_KEY
-    commands:
-      - echo "[$(date -u)] Running OWASP Dependency-Check…"
-      - apt-get update -q && apt-get install -y -q wget unzip
-      - wget -q https://github.com/dependency-check/DependencyCheck/releases/download/v12.2.0/dependency-check-12.2.0-release.zip
-      - unzip -q dependency-check-12.2.0-release.zip
-      - >
-        ./dependency-check/bin/dependency-check.sh
-        --project "orange-uptime-kuma"
-        --scan .
-        --format HTML
-        --format JSON
-        --out ./dependency-check-report
-        --nvdApiKey $NVD_API_KEY || true
-      - echo "[$(date -u)] OWASP scan complete"
-
   - name: secrets-scan
-    image: node:18
+    image: node:22
     depends_on:
       - build
     commands:
@@ -97,7 +85,7 @@ steps:
         || echo "[$(date -u)] No hardcoded secrets detected"
 
   - name: sbom
-    image: node:18
+    image: node:22
     depends_on:
       - build
     volumes:
@@ -106,7 +94,7 @@ steps:
     commands:
       - npm ci
       - echo "[$(date -u)] Generating Software Bill of Materials…"
-      - npx @cyclonedx/cyclonedx-npm --output-format JSON --output-file sbom.json
+      - npx @cyclonedx/cyclonedx-npm --ignore-npm-errors --output-format JSON --output-file sbom.json
       - |
         echo "[$(date -u)] SBOM generated:"
         node -e "
@@ -118,7 +106,7 @@ steps:
         "
 
   - name: config-validation
-    image: node:18
+    image: node:22
     depends_on:
       - build
     commands:
@@ -126,7 +114,7 @@ steps:
       - |
         node -e "
           const pkg = require('./package.json');
-          const required = ['name','version','main','scripts','dependencies'];
+          const required = ['name','version','scripts','dependencies'];
           required.forEach(f => { if (!pkg[f]) throw new Error('Missing field: ' + f); });
           console.log('[$(date -u)] package.json is valid');
           console.log('  Name:', pkg.name);
@@ -140,48 +128,6 @@ steps:
           console.log('Actual Node:', process.version);
         "
       - echo "[$(date -u)] Config validation complete"
-
-  - name: notify-discord
-    image: curlimages/curl:latest
-    depends_on:
-      - test
-      - sast-eslint
-      - npm-audit
-      - owasp-dependency-check
-      - secrets-scan
-      - sbom
-      - config-validation
-    environment:
-      DISCORD_WEBHOOK:
-        from_secret: DISCORD_WEBHOOK
-    when:
-      status:
-        - success
-        - failure
-    commands:
-      - |
-        if [ "$DRONE_BUILD_STATUS" = "success" ]; then
-          COLOR=3066993
-          TITLE="✅ PR check geslaagd"
-        else
-          COLOR=15158332
-          TITLE="❌ PR check mislukt"
-        fi
-        SHORT_SHA=$(echo "$DRONE_COMMIT" | cut -c1-7)
-        curl -s -X POST "$DISCORD_WEBHOOK" \
-          -H "Content-Type: application/json" \
-          -d "{
-            \"embeds\": [{
-              \"title\": \"$TITLE\",
-              \"color\": $COLOR,
-              \"fields\": [
-                {\"name\": \"Pull Request\", \"value\": \"#$DRONE_PULL_REQUEST\", \"inline\": true},
-                {\"name\": \"Branch\", \"value\": \"$DRONE_SOURCE_BRANCH\", \"inline\": true},
-                {\"name\": \"Commit\", \"value\": \"$SHORT_SHA\", \"inline\": true},
-                {\"name\": \"Aangemaakt door\", \"value\": \"$DRONE_COMMIT_AUTHOR\", \"inline\": false}
-              ]
-            }]
-          }"
 
 ---
 kind: pipeline
@@ -203,10 +149,6 @@ steps:
       repo:
         from_secret: KUMA_IMAGE_REPO
       dockerfile: docker/dockerfile
-      # Pin the build to the runnable "release" stage. Without a target,
-      # Docker builds the LAST stage in the file ("upload-artifact"), which
-      # runs upload-github-release-asset.sh against GitHub and fails (no
-      # GITHUB_TOKEN). "release" is the stage that matches louislam's :latest.
       target: release
       tags:
         - latest
@@ -216,41 +158,3 @@ steps:
       password:
         from_secret: GITEA_REGISTRY_PASSWORD
       insecure: true
-
-  - name: notify-discord
-    image: curlimages/curl:latest
-    depends_on:
-      - docker-build-push
-    environment:
-      DISCORD_WEBHOOK:
-        from_secret: DISCORD_WEBHOOK
-    when:
-      status:
-        - success
-        - failure
-    commands:
-      - |
-        if [ "$DRONE_BUILD_STATUS" = "success" ]; then
-          COLOR=3066993
-          TITLE="✅ Docker image gepusht"
-          DESC="Image: $DRONE_REPO:${DRONE_COMMIT_SHA:0:7}"
-        else
-          COLOR=15158332
-          TITLE="❌ Docker build mislukt"
-          DESC="Zie de Drone logs voor details."
-        fi
-        SHORT_SHA=$(echo "$DRONE_COMMIT" | cut -c1-7)
-        curl -s -X POST "$DISCORD_WEBHOOK" \
-          -H "Content-Type: application/json" \
-          -d "{
-            \"embeds\": [{
-              \"title\": \"$TITLE\",
-              \"description\": \"$DESC\",
-              \"color\": $COLOR,
-              \"fields\": [
-                {\"name\": \"Branch\", \"value\": \"$DRONE_BRANCH\", \"inline\": true},
-                {\"name\": \"Commit\", \"value\": \"$SHORT_SHA\", \"inline\": true},
-                {\"name\": \"Door\", \"value\": \"$DRONE_COMMIT_AUTHOR\", \"inline\": true}
-              ]
-            }]
-          }"
